@@ -316,6 +316,46 @@ main{padding:14px 16px calc(var(--tabbar-h) + 96px);max-width:1100px;width:100%;
   .overlay{align-items:center}
   .catgrid{grid-template-columns:repeat(5,1fr)}
 }
+
+/* ---- iPhone: Dynamic Island, barra in basso, pollice ----
+   Su Mac i margini di sicurezza valgono zero e le regole sotto i 900px non si applicano:
+   l'aspetto da computer resta identico. */
+:root{
+  --sa-t:env(safe-area-inset-top,0px); --sa-b:env(safe-area-inset-bottom,0px);
+  --sa-l:env(safe-area-inset-left,0px); --sa-r:env(safe-area-inset-right,0px);
+  --statusbar:var(--accent);
+}
+[data-theme="dark"]{--statusbar:var(--bg)}
+/* fascia sotto l'orologio e la Dynamic Island: il contenuto ci scorre sotto senza finire illeggibile */
+body::before{content:"";position:fixed;top:0;left:0;right:0;height:var(--sa-t);background:var(--statusbar);z-index:55;pointer-events:none}
+button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+#tabbar{padding-left:var(--sa-l);padding-right:var(--sa-r)}
+@media (max-width:899px){
+  main{min-width:0}
+  #fab{right:calc(18px + var(--sa-r))}
+  .sheet{max-height:calc(100vh - var(--sa-t) - 12px);max-height:calc(100dvh - var(--sa-t) - 12px);overscroll-behavior:contain}
+  main{
+    padding-top:calc(14px + var(--sa-t));
+    padding-left:max(16px, calc(var(--sa-l) + 8px));
+    padding-right:max(16px, calc(var(--sa-r) + 8px));
+  }
+  /* la barra dei mesi resta agganciata in alto mentre scorri, sempre sotto la Dynamic Island */
+  .month-nav{
+    position:sticky;top:var(--sa-t);z-index:30;
+    margin-left:-16px;margin-right:-16px;padding:8px 16px;
+    background:color-mix(in srgb,var(--bg) 97%,transparent);
+    -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  }
+  .iconbtn{width:44px;height:44px;font-size:19px}
+  .backrow button{min-height:44px}
+  .xbtn{width:38px;height:38px}
+  /* niente zoom automatico di Safari quando tocchi un campo di testo */
+  input,select,textarea{font-size:16px!important}
+  .swipe-next{animation:swnext .2s ease}
+  .swipe-prev{animation:swprev .2s ease}
+}
+@keyframes swnext{from{opacity:.4;transform:translateX(18px)}to{opacity:1;transform:none}}
+@keyframes swprev{from{opacity:.4;transform:translateX(-18px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -2508,6 +2548,42 @@ function wireEvents() {
   });
 }
 
+
+/* ---------- iPhone: scorri a destra o a sinistra per cambiare mese (Home e Budget) ---------- */
+function scrollsSideways(el) {
+  for (let n = el; n && n.tagName !== 'MAIN'; n = n.parentElement) {
+    const ox = getComputedStyle(n).overflowX;
+    if ((ox === 'auto' || ox === 'scroll') && n.scrollWidth > n.clientWidth + 2) return true;
+  }
+  return false;
+}
+function initSwipe() {
+  const main = document.querySelector('main');
+  if (!main || !('ontouchstart' in window)) return;
+  let sx = 0, sy = 0, st = 0, armed = false;
+  main.addEventListener('touchstart', e => {
+    armed = false;
+    if (e.touches.length !== 1 || (UI.view !== 'home' && UI.view !== 'budget')) return;
+    const t = e.target;
+    if (t.closest('input, textarea, select, .quickrow, .seg') || scrollsSideways(t)) return;
+    const p = e.touches[0];
+    if (p.clientX < 22 || p.clientX > window.innerWidth - 22) return;   // bordi: lasciati ai gesti di iOS
+    sx = p.clientX; sy = p.clientY; st = Date.now(); armed = true;
+  }, { passive: true });
+  main.addEventListener('touchend', e => {
+    if (!armed) return;
+    armed = false;
+    const p = e.changedTouches[0];
+    const dx = p.clientX - sx, dy = p.clientY - sy;
+    if (Date.now() - st > 700 || Math.abs(dx) < 70 || Math.abs(dy) > Math.abs(dx) * 0.5) return;
+    const n = dx < 0 ? 1 : -1;
+    UI.month = shiftMonth(UI.month, n); UI.filterCat = null;
+    render(UI.view);
+    const v = document.getElementById('view-' + UI.view);
+    if (v) { v.classList.remove('swipe-next', 'swipe-prev'); void v.offsetWidth; v.classList.add(n > 0 ? 'swipe-next' : 'swipe-prev'); }
+  }, { passive: true });
+}
+
 /* ---------- Avvio ---------- */
 async function boot() {
   await loadDB();
@@ -2527,6 +2603,7 @@ async function boot() {
   showView('home');
   initSaveFile();
   initSync();
+  initSwipe();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch (e) {}
   }
